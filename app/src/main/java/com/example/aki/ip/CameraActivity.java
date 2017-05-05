@@ -18,6 +18,17 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.widget.Toast;
 
+import com.example.aki.ip.filters.Filter;
+import com.example.aki.ip.filters.NoneFilter;
+import com.example.aki.ip.filters.convolution.StrokeEdgesFilter;
+import com.example.aki.ip.filters.curve.CrossProcessCurveFilter;
+import com.example.aki.ip.filters.curve.PortraCurveFilter;
+import com.example.aki.ip.filters.curve.ProviaCurveFilter;
+import com.example.aki.ip.filters.curve.VelviaCurveFilter;
+import com.example.aki.ip.filters.mixer.RecolorCMVFilter;
+import com.example.aki.ip.filters.mixer.RecolorRCFilter;
+import com.example.aki.ip.filters.mixer.RecolorRGVFilter;
+
 import org.opencv.android.BaseLoaderCallback;
 import org.opencv.android.CameraBridgeViewBase;
 import org.opencv.android.JavaCameraView;
@@ -32,7 +43,21 @@ import java.io.File;
 import java.util.List;
 
 public class CameraActivity extends ActionBarActivity implements CameraBridgeViewBase.CvCameraViewListener2 {
-
+    // Keys for storing the indices of the active filters.
+    private static final String STATE_CURVE_FILTER_INDEX =
+            "curveFilterIndex";
+    private static final String STATE_MIXER_FILTER_INDEX =
+            "mixerFilterIndex";
+    private static final String STATE_CONVOLUTION_FILTER_INDEX =
+            "convolutionFilterIndex";
+    // The filters.
+    private Filter[] mCurveFilters;
+    private Filter[] mMixerFilters;
+    private Filter[] mConvolutionFilters;
+    // The indices of the active filters.
+    private int mCurveFilterIndex;
+    private int mMixerFilterIndex;
+    private int mConvolutionFilterIndex;
     private static final String TAG =
             CameraActivity.class.getSimpleName();
     private static final String STATE_CAMERA_INDEX = "cameraIndex";
@@ -56,6 +81,23 @@ public class CameraActivity extends ActionBarActivity implements CameraBridgeVie
                             Log.d(TAG, "OpenCV loaded successfully");
                             mCameraView.enableView();
                             mBgr = new Mat();
+                            mCurveFilters = new Filter[] {
+                                    new NoneFilter(),
+                                    new PortraCurveFilter(),
+                                    new ProviaCurveFilter(),
+                                    new VelviaCurveFilter(),
+                                    new CrossProcessCurveFilter()
+                            };
+                            mMixerFilters = new Filter[] {
+                                    new NoneFilter(),
+                                    new RecolorRCFilter(),
+                                    new RecolorRGVFilter(),
+                                    new RecolorCMVFilter()
+                            };
+                            mConvolutionFilters = new Filter[] {
+                                    new NoneFilter(),
+                                    new StrokeEdgesFilter()
+                            };
                             break;
                         default:
                             super.onManagerConnected(status);
@@ -66,18 +108,30 @@ public class CameraActivity extends ActionBarActivity implements CameraBridgeVie
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
         final Window window = getWindow();
         window.addFlags(
                 WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+
         if (savedInstanceState != null) {
             mCameraIndex = savedInstanceState.getInt(
                     STATE_CAMERA_INDEX, 0);
             mImageSizeIndex = savedInstanceState.getInt(
                     STATE_IMAGE_SIZE_INDEX, 0);
+            mCurveFilterIndex = savedInstanceState.getInt(
+                    STATE_CURVE_FILTER_INDEX, 0);
+            mMixerFilterIndex = savedInstanceState.getInt(
+                    STATE_MIXER_FILTER_INDEX, 0);
+            mConvolutionFilterIndex = savedInstanceState.getInt(
+                    STATE_CONVOLUTION_FILTER_INDEX, 0);
         } else {
             mCameraIndex = 0;
             mImageSizeIndex = 0;
+            mCurveFilterIndex = 0;
+            mMixerFilterIndex = 0;
+            mConvolutionFilterIndex = 0;
         }
+
         final Camera camera;
         if (Build.VERSION.SDK_INT >=
                 Build.VERSION_CODES.GINGERBREAD) {
@@ -88,16 +142,17 @@ public class CameraActivity extends ActionBarActivity implements CameraBridgeVie
                             Camera.CameraInfo.CAMERA_FACING_FRONT);
             mNumCameras = Camera.getNumberOfCameras();
             camera = Camera.open(mCameraIndex);
-        } else { // pre-Gingerbread
-// Assume there is only 1 camera and it is rear-facing.
+        } else {
             mIsCameraFrontFacing = false;
             mNumCameras = 1;
             camera = Camera.open();
         }
         final Camera.Parameters parameters = camera.getParameters();
         camera.release();
-        mSupportedImageSizes = parameters.getSupportedPreviewSizes();
+        mSupportedImageSizes =
+                parameters.getSupportedPreviewSizes();
         final Camera.Size size = mSupportedImageSizes.get(mImageSizeIndex);
+
         mCameraView = new JavaCameraView(this, mCameraIndex);
         mCameraView.setMaxFrameSize(size.width, size.height);
         mCameraView.setCvCameraViewListener(this);
@@ -106,9 +161,17 @@ public class CameraActivity extends ActionBarActivity implements CameraBridgeVie
     }
 
     public void onSaveInstanceState(Bundle savedInstanceState) {
-        savedInstanceState.putInt(STATE_CAMERA_INDEX, mCameraIndex);
+
+                savedInstanceState.putInt(STATE_CAMERA_INDEX, mCameraIndex);
         savedInstanceState.putInt(STATE_IMAGE_SIZE_INDEX,
                 mImageSizeIndex);
+        savedInstanceState.putInt(STATE_CURVE_FILTER_INDEX,
+                mCurveFilterIndex);
+        savedInstanceState.putInt(STATE_MIXER_FILTER_INDEX,
+                mMixerFilterIndex);
+        savedInstanceState.putInt(STATE_CONVOLUTION_FILTER_INDEX,
+                mConvolutionFilterIndex);
+
         super.onSaveInstanceState(savedInstanceState);
     }
 
@@ -149,8 +212,7 @@ public class CameraActivity extends ActionBarActivity implements CameraBridgeVie
     public boolean onCreateOptionsMenu(final Menu menu) {
         getMenuInflater().inflate(R.menu.activity_camera, menu);
         if (mNumCameras < 2) {
-// Remove the option to switch cameras, since there is
-// only 1.
+
             menu.removeItem(R.id.menu_next_camera);
         }
         int numSupportedImageSizes = mSupportedImageSizes.size();
@@ -165,8 +227,7 @@ public class CameraActivity extends ActionBarActivity implements CameraBridgeVie
         }
         return true;
     }
-    // Suppress backward incompatibility errors because we provide
-// backward-compatible fallbacks (for recreate).
+
     @SuppressLint("NewApi")
     @Override
     public boolean onOptionsItemSelected(final MenuItem item) {
@@ -176,23 +237,42 @@ public class CameraActivity extends ActionBarActivity implements CameraBridgeVie
         if (item.getGroupId() == MENU_GROUP_ID_SIZE) {
             mImageSizeIndex = item.getItemId();
             recreate();
+
             return true;
         }
         switch (item.getItemId()) {
+            case R.id.menu_next_curve_filter:
+                mCurveFilterIndex++;
+                if (mCurveFilterIndex == mCurveFilters.length) {
+                    mCurveFilterIndex = 0;
+                }
+                return true;
+            case R.id.menu_next_mixer_filter:
+                mMixerFilterIndex++;
+                if (mMixerFilterIndex == mMixerFilters.length) {
+                    mMixerFilterIndex = 0;
+                }
+                return true;
+            case R.id.menu_next_convolution_filter:
+                mConvolutionFilterIndex++;
+                if (mConvolutionFilterIndex ==
+                        mConvolutionFilters.length) {
+                    mConvolutionFilterIndex = 0;
+                }
+                return true;
             case R.id.menu_next_camera:
                 mIsMenuLocked = true;
-// With another camera index, recreate the activity.
                 mCameraIndex++;
                 if (mCameraIndex == mNumCameras) {
                     mCameraIndex = 0;
                 }
-                mImageSizeIndex = 0;
                 recreate();
+
                 return true;
             case R.id.menu_take_photo:
                 mIsMenuLocked = true;
-// Next frame, take the photo.
                 mIsPhotoPending = true;
+
                 return true;
             default:
                 return super.onOptionsItemSelected(item);
@@ -208,19 +288,26 @@ public class CameraActivity extends ActionBarActivity implements CameraBridgeVie
     @Override
     public Mat onCameraFrame(final CameraBridgeViewBase.CvCameraViewFrame inputFrame) {
         final Mat rgba = inputFrame.rgba();
+
+
+        mCurveFilters[mCurveFilterIndex].apply(rgba, rgba);
+        mMixerFilters[mMixerFilterIndex].apply(rgba, rgba);
+        mConvolutionFilters[mConvolutionFilterIndex].apply(rgba, rgba);
+
         if (mIsPhotoPending) {
             mIsPhotoPending = false;
             takePhoto(rgba);
         }
+
         if (mIsCameraFrontFacing) {
-// Mirror (horizontally flip) the preview.
+
             Core.flip(rgba, rgba, 1);
         }
+
         return rgba;
     }
 
     private void takePhoto(final Mat rgba) {
-// Determine the path and metadata for the photo.
         final long currentTimeMillis = System.currentTimeMillis();
         final String appName = getString(R.string.app_name);
         final String galleryPath =
@@ -237,7 +324,6 @@ public class CameraActivity extends ActionBarActivity implements CameraBridgeVie
         values.put(MediaStore.Images.Media.TITLE, appName);
         values.put(MediaStore.Images.Media.DESCRIPTION, appName);
         values.put(MediaStore.Images.Media.DATE_TAKEN, currentTimeMillis);
-// Ensure that the album directory exists.
         File album = new File(albumPath);
         if (!album.isDirectory() && !album.mkdirs()) {
             Log.e(TAG, "Failed to create album directory at " +
@@ -245,14 +331,13 @@ public class CameraActivity extends ActionBarActivity implements CameraBridgeVie
             onTakePhotoFailed();
             return;
         }
-// Try to create the photo.
+
         Imgproc.cvtColor(rgba, mBgr, Imgproc.COLOR_RGBA2BGR, 3);
         if (!Imgcodecs.imwrite(photoPath, mBgr)) {
             Log.e(TAG, "Failed to save photo to " + photoPath);
             onTakePhotoFailed();
         }
         Log.d(TAG, "Photo saved successfully to " + photoPath);
-// Try to insert the photo into the MediaStore.
         Uri uri;
         try {
             uri = getContentResolver().insert(
@@ -260,7 +345,6 @@ public class CameraActivity extends ActionBarActivity implements CameraBridgeVie
         } catch (final Exception e) {
             Log.e(TAG, "Failed to insert photo into MediaStore");
             e.printStackTrace();
-// Since the insertion failed, delete the photo.
             File photo = new File(photoPath);
             if (!photo.delete()) {
                 Log.e(TAG, "Failed to delete non-inserted photo");
@@ -268,7 +352,6 @@ public class CameraActivity extends ActionBarActivity implements CameraBridgeVie
             onTakePhotoFailed();
             return;
         }
-// Open the photo in LabActivity.
         final Intent intent = new Intent(this, LabActivity.class);
         intent.putExtra(LabActivity.EXTRA_PHOTO_URI, uri);
         intent.putExtra(LabActivity.EXTRA_PHOTO_DATA_PATH,
